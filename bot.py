@@ -61,11 +61,22 @@ def get_epic_games():
             title = game['title']
 
             # Build store link — prefer productSlug, fall back to urlSlug
-            slug = game.get('productSlug') or game.get('urlSlug') or ''
-            slug = slug.replace('/home', '').strip('/')
-            if not slug:
-                continue
-            link = f"https://store.epicgames.com/en-IN/p/{slug}"
+            s# Try multiple slug sources
+slug = (
+    game.get('productSlug') or
+    game.get('urlSlug') or
+    game.get('catalogNs', {}).get('mappings', [{}])[0].get('pageSlug') or
+    ''
+)
+slug = slug.replace('/home', '').strip('/')
+if not slug:
+    continue
+
+# Use free-games page as fallback if slug looks invalid
+if len(slug) < 3 or slug == '[]':
+    link = "https://store.epicgames.com/en-IN/free-games"
+else:
+    link = f"https://store.epicgames.com/en-IN/p/{slug}"
 
             # Get best available image
             images = game.get('keyImages', [])
@@ -147,10 +158,12 @@ def check_and_notify():
         new_games_found += 1
 
         emoji = "🎮" if platform == "Steam" else "🎁"
-        caption = (
-            f"{emoji} *Free on {platform}!*\n\n"
-            f"🕹 *{title}*\n\n"
-            f"Claim it for free before the offer expires!"
+       caption = (
+    f"{emoji} *Free on {platform}!*\n\n"
+    f"🕹 *{title}*\n\n"
+    f"Claim it for free before the offer expires!\n\n"
+    f"⚠️ If the link doesn't work, visit the Epic free games page directly."
+)
         )
         send_telegram_photo(image, caption, f"Claim on {platform} →", link)
         print(f"[Bot] Sent: {title} ({platform})")
@@ -166,7 +179,7 @@ def check_and_notify():
 if __name__ == "__main__":
     check_and_notify()  # Run immediately on start
 
-    schedule.every(6).hours.do(check_and_notify)
+    schedule.every(7).days.do(check_and_notify)
     print("[Bot] Scheduler started. Checking every 6 hours.")
 
     while True:
