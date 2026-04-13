@@ -1,10 +1,9 @@
 import requests
 import time
 import schedule
-
-TOKEN = "8780000176:AAEZI-C6sWmxMn6NONW_OU9Mel6hbVPbT-w"  # Paste your new token here
-CHAT_ID = "8679251267"  # Paste your chat ID here
-
+import os
+TOKEN = os.environ.get("TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 # ------------------------------------------------
 # Telegram sender
 # ------------------------------------------------
