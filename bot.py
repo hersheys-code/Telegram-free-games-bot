@@ -2,8 +2,8 @@ import requests
 import time
 import schedule
 
-TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+TOKEN = "8780000176:AAET74oRiIlBg9lpC5dbWIXKWap2FQbXo0c"
+CHAT_ID = "8679251267"
 
 # ------------------------------------------------
 # Telegram sender
