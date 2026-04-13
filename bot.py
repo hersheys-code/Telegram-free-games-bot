@@ -1,12 +1,15 @@
 import requests
 import time
+import schedule
 
-TOKEN = "8780000176:AAHYECxu0FOS8EOJSdQU2M1HENwBydgYnbA"
-CHAT_ID = "8679251267"
+TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
+# ------------------------------------------------
+# Telegram sender
+# ------------------------------------------------
 def send_telegram_photo(photo_url, caption, button_text, button_url):
     url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-    
     payload = {
         "chat_id": CHAT_ID,
         "photo": photo_url,
@@ -18,70 +21,154 @@ def send_telegram_photo(photo_url, caption, button_text, button_url):
             ]]
         }
     }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"[Telegram] Failed to send message: {e}")
 
-    requests.post(url, json=payload)
 
-# 🔹 Epic Games
+# ------------------------------------------------
+# Epic Games (India locale)
+# ------------------------------------------------
 def get_epic_games():
-    url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions"
-    data = requests.get(url).json()
+    url = (
+        "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions"
+        "?locale=en-IN&country=IN&allowCountries=IN"
+    )
+    try:
+        data = requests.get(url, timeout=10).json()
+        games = data['data']['Catalog']['searchStore']['elements']
+    except Exception as e:
+        print(f"[Epic] API error: {e}")
+        return []
 
-    games = data['data']['Catalog']['searchStore']['elements']
     result = []
-
     for game in games:
         try:
-            if game['promotions'] and game['promotions']['promotionalOffers']:
-                title = game['title']
-                image = game['keyImages'][0]['url']
-                slug = game['productSlug']
-                link = f"https://store.epicgames.com/en-US/p/{slug}"
+            promos = game.get('promotions')
+            if not promos:
+                continue
+            offers = promos.get('promotionalOffers', [])
+            if not offers or not offers[0].get('promotionalOffers'):
+                continue
 
-                result.append((title, image, link, "Epic Games"))
-        except:
-            pass
+            # Confirm it's actually free (originalPrice != 0 means it's a real giveaway)
+            offer_detail = offers[0]['promotionalOffers'][0]
+            discount = offer_detail.get('discountSetting', {})
+            if discount.get('discountPercentage', 100) != 0:
+                continue  # Not 100% off
+
+            title = game['title']
+
+            # Build store link — prefer productSlug, fall back to urlSlug
+            slug = game.get('productSlug') or game.get('urlSlug') or ''
+            slug = slug.replace('/home', '').strip('/')
+            if not slug:
+                continue
+            link = f"https://store.epicgames.com/en-IN/p/{slug}"
+
+            # Get best available image
+            images = game.get('keyImages', [])
+            image = images[0]['url'] if images else None
+            if not image:
+                continue
+
+            result.append((title, image, link, "Epic Games"))
+        except Exception as e:
+            print(f"[Epic] Skipping game due to error: {e}")
 
     return result
 
-# 🔹 Steam (using unofficial API)
+
+# ------------------------------------------------
+# Steam free promotions via CheapShark
+# ------------------------------------------------
 def get_steam_games():
-    url = "https://www.cheapshark.com/api/1.0/deals?price=0"
-    data = requests.get(url).json()
+    url = "https://www.cheapshark.com/api/1.0/deals?upperPrice=0&storeID=1"
+    try:
+        data = requests.get(url, timeout=10).json()
+    except Exception as e:
+        print(f"[Steam] API error: {e}")
+        return []
 
     result = []
-    for game in data[:5]:
-        title = game['title']
-        image = game['thumb']
-        link = f"https://www.cheapshark.com/redirect?dealID={game['dealID']}"
+    seen = set()
+    for game in data:
+        try:
+            if game.get("salePrice") != "0.00":
+                continue
+            title = game['title']
+            if title in seen:
+                continue
+            seen.add(title)
 
-        result.append((title, image, link, "Steam"))
+            steam_id = game.get('steamAppID')
+            if not steam_id:
+                continue
 
-    return result
+            image = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{steam_id}/header.jpg"
+            link = f"https://store.steampowered.com/app/{steam_id}"
+            result.append((title, image, link, "Steam"))
+        except Exception as e:
+            print(f"[Steam] Skipping game due to error: {e}")
 
-# 🔹 GOG (basic scraping alternative)
+    return result[:5]
+
+
+# ------------------------------------------------
+# GOG placeholder (rarely has free games)
+# ------------------------------------------------
 def get_gog_games():
-    # GOG rarely gives free games, placeholder logic
     return []
 
-def main():
-    games = []
 
+# ------------------------------------------------
+# Main runner — call this on a schedule
+# ------------------------------------------------
+sent_titles = set()  # persists across scheduled runs
+
+def check_and_notify():
+    print("[Bot] Checking for free games...")
+    games = []
     games.extend(get_epic_games())
     games.extend(get_steam_games())
     games.extend(get_gog_games())
 
     if not games:
-        message = "❌ No free games available right now."
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={
-            "chat_id": CHAT_ID,
-            "text": message
-        })
+        print("[Bot] No free games found right now.")
         return
 
+    new_games_found = 0
     for title, image, link, platform in games:
-        caption = f"🎮 *{title}*\nPlatform: {platform}"
-        send_telegram_photo(image, caption, "🎯 Claim Now", link)
-        time.sleep(1)
+        if title in sent_titles:
+            continue  # Already notified
 
+        sent_titles.add(title)
+        new_games_found += 1
+
+        emoji = "🎮" if platform == "Steam" else "🎁"
+        caption = (
+            f"{emoji} *Free on {platform}!*\n\n"
+            f"🕹 *{title}*\n\n"
+            f"Claim it for free before the offer expires!"
+        )
+        send_telegram_photo(image, caption, f"Claim on {platform} →", link)
+        print(f"[Bot] Sent: {title} ({platform})")
+        time.sleep(1)  # avoid Telegram rate limits
+
+    if new_games_found == 0:
+        print("[Bot] No new games since last check.")
+
+
+# ------------------------------------------------
+# Entry point — runs every 6 hours
+# ------------------------------------------------
 if __name__ == "__main__":
-    main()
+    check_and_notify()  # Run immediately on start
+
+    schedule.every(6).hours.do(check_and_notify)
+    print("[Bot] Scheduler started. Checking every 6 hours.")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
